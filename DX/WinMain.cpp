@@ -7,9 +7,19 @@
 //Structures
 struct SimpleVertex
 {
-	XMFLOAT3 Pos;
+	XMFLOAT3 Pos; //position
+	XMFLOAT4 Color; //point color
 };
 
+
+//constant buffer
+struct ConstantBuffer
+
+{
+	XMMATRIX mWorld;  //world matrix
+	XMMATRIX mView;   //view matrix
+	XMMATRIX mProjection;  //projection matrix
+};
 
 //Global variables
 
@@ -21,16 +31,29 @@ ID3D11Device* g_pd3dDevice = NULL; //resource creator
 ID3D11DeviceContext* g_pImmediateContext = NULL;  //graphic information output
 IDXGISwapChain* g_pSwapChain = NULL;  //conection chain (buffer and screen)   
 ID3D11RenderTargetView* g_pRenderTargetView = NULL; //back buffer object
+
 ID3D11VertexShader* g_pVertexShader = NULL; //Vertex shader
 ID3D11PixelShader* g_pPixelShader = NULL;  //Pixel shader
 ID3D11InputLayout* g_pVertexLayout = NULL; // Vertex format description
 ID3D11Buffer* g_pVertexBuffer = NULL; //Vertex buffer
+ID3D11Buffer* g_pIndexBuffer = NULL;  //Vertex ID buffer
+ID3D11Buffer* g_pConstantBuffer = NULL; //Constant buffer
+
+XMMATRIX                g_World; //World matrix                    
+XMMATRIX                g_View;  //View matrix                    
+XMMATRIX                g_Projection;  //Projection matrix              
 
 
 //Function declarations
 
-//nitialization of input pattern and vertex buffer
+//initialization of input pattern and vertex buffer
 HRESULT InitGeometry();
+
+//initialization of mitrixes
+HRESULT InitMatrixes();    
+
+//reload world matrix
+void SetMatrixes();        
 
 //Create window
 HRESULT InitWindow(HINSTANCE hInstance, int  nCmdShow);
@@ -78,6 +101,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 		return 0;
 	}
 
+	//Matrix initialization
+	if (FAILED(InitMatrixes()))
+	{
+		CleanupDevice();
+		return 0;
+	}
+
 	//Main message cycle
 	MSG msg = { 0 };
 	while (WM_QUIT != msg.message)
@@ -89,6 +119,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 		}
 		else
 		{
+			SetMatrixes();
 			Render();
 		}
 	}
@@ -283,6 +314,7 @@ HRESULT InitGeometry()
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 		/*semantic name, semantic index, size, incoming slot(0 - 15), address of the beginning of data in the vertex buffer, class of the incoming slot(not important), InstanceDataStepRate(not important) */
+			{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 	};
 
 	UINT numElements = ARRAYSIZE(layout);
@@ -316,15 +348,20 @@ HRESULT InitGeometry()
 	}
 
 	// Create vertex buffer
-	SimpleVertex vertices[3];
-	vertices[0].Pos.x = 0.0f;  vertices[0].Pos.y = 0.5f;  vertices[0].Pos.z = 0.5f;
-	vertices[1].Pos.x = 0.5f;  vertices[1].Pos.y = -0.5f;  vertices[1].Pos.z = 0.5f;
-	vertices[2].Pos.x = -0.5f;  vertices[2].Pos.y = -0.5f;  vertices[2].Pos.z = 0.5f;
+	SimpleVertex vertices[] =
+	{  
+		//coordinates and color
+		{ XMFLOAT3(0.0f,  1.5f,  0.0f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f) },
+		{ XMFLOAT3(-1.0f,  0.0f, -1.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f) },
+		{ XMFLOAT3(1.0f,  0.0f, -1.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f) },
+		{ XMFLOAT3(-1.0f,  0.0f,  1.0f), XMFLOAT4(0.0f, 1.0f, 1.0f, 1.0f) },
+		{ XMFLOAT3(1.0f,  0.0f,  1.0f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f) }
+	};
 
 	D3D11_BUFFER_DESC bd;  // The structure that describes the buffer being created.
 	ZeroMemory(&bd, sizeof(bd));  // clean it
 	bd.Usage = D3D11_USAGE_DEFAULT;
-	bd.ByteWidth = sizeof(SimpleVertex) * 3; // buffer size = size of 1 vertx * 3
+	bd.ByteWidth = sizeof(SimpleVertex) * 5; // buffer size = size of 1 vertx * 5
 	bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; // buffer type is vertex buffer
 	bd.CPUAccessFlags = 0;
 
@@ -339,15 +376,106 @@ HRESULT InitGeometry()
 		return hr;
 	}
 
+
+	//creaye ID buffer
+	// Создание массива с данными
+	WORD indices[] =
+	{ 
+		0,2,1,    
+		0,3,4,   
+		0,1,3,    
+		0,4,2,
+		1,2,3,
+		2,4,3,
+	};
+
+	bd.Usage = D3D11_USAGE_DEFAULT;   //The structure that describes the buffer being created
+	bd.ByteWidth = sizeof(WORD) * 18; // 6 triangles=>18 vertexes
+	bd.BindFlags = D3D11_BIND_INDEX_BUFFER; //buffer index type
+	bd.CPUAccessFlags = 0;
+	InitData.pSysMem = indices;   //pointer on index array
+
+	// create index buffer object
+	hr = g_pd3dDevice->CreateBuffer(&bd, &InitData, &g_pIndexBuffer);
+	if (FAILED(hr))
+	{
+		return hr;
+
+	}
 	// Set vertex buffer
 	UINT stride = sizeof(SimpleVertex);
 	UINT offset = 0;
 	g_pImmediateContext->IASetVertexBuffers(0, 1, &g_pVertexBuffer, &stride, &offset);
 
+	// Settng index buffer
+	g_pImmediateContext->IASetIndexBuffer(g_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+
 	// Setting the way to draw vertices in the buffer
 	g_pImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
+	// Create constant buffer
+	bd.Usage = D3D11_USAGE_DEFAULT;
+	bd.ByteWidth = sizeof(ConstantBuffer); //buffer size=structure size
+	bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER; //const buffer type
+	bd.CPUAccessFlags = 0;
+	hr = g_pd3dDevice->CreateBuffer(&bd, NULL, &g_pConstantBuffer);
+	if (FAILED(hr))
+	{
+		return hr;
+	}
 	return S_OK;
+}
+
+//Matrix initialization
+HRESULT InitMatrixes()
+{
+	RECT rc;
+	GetClientRect(g_hWnd, &rc);
+	UINT width = rc.right - rc.left;
+	UINT height = rc.bottom - rc.top;
+
+	//world matrix init
+	g_World = XMMatrixIdentity();
+
+	//View matrix init
+	XMVECTOR Eye = XMVectorSet(0.0f, 1.0f, -5.0f, 0.0f);  // from where
+	XMVECTOR At = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);    // where
+	XMVECTOR Up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);    // direction of top
+	g_View = XMMatrixLookAtLH(Eye, At, Up);
+
+	// projection matrix init
+	g_Projection = XMMatrixPerspectiveFovLH(XM_PIDIV4, width / (FLOAT)height, 0.01f, 100.0f);
+
+	return S_OK;
+}
+
+//Matrix update
+void SetMatrixes()
+{
+	//update time
+	static float t = 0.0f;
+	if (g_driverType==D3D_DRIVER_TYPE_REFERENCE)
+	{
+		t += (float)XM_PI / 0.125f;
+	}
+	else
+	{
+		static DWORD dwTimeStart = 0;
+		DWORD dwTimeCur = GetTickCount();
+		if (dwTimeStart == 0)
+			dwTimeStart = dwTimeCur;
+		t = (dwTimeCur - dwTimeStart) / 1000.0f;
+	}
+	// Turn world (Y, angel=t)
+	g_World = XMMatrixRotationY(t);
+
+	//Update constant buffer
+	ConstantBuffer cb;
+	cb.mWorld = XMMatrixTranspose(g_World);
+	cb.mView = XMMatrixTranspose(g_View);
+	cb.mProjection = XMMatrixTranspose(g_Projection);
+	//load the temporary structure into the g_pConstantBuffer constant buffer
+	g_pImmediateContext->UpdateSubresource(g_pConstantBuffer, 0, NULL, &cb, 0, 0);
 }
 
 
@@ -356,7 +484,9 @@ void CleanupDevice()
 	// disable the device context, then release the objects
 	// delete in the reverse order of creating
 	if (g_pImmediateContext) g_pImmediateContext->ClearState();
+	if (g_pConstantBuffer) g_pConstantBuffer->Release();
 	if (g_pVertexBuffer) g_pVertexBuffer->Release();
+	if (g_pIndexBuffer) g_pIndexBuffer->Release();
 	if (g_pVertexLayout) g_pVertexLayout->Release();
 	if (g_pVertexShader) g_pVertexShader->Release();
 	if (g_pPixelShader) g_pPixelShader->Release();
@@ -373,9 +503,11 @@ void Render()
 
 	 //Connect shaders to drew object
 	g_pImmediateContext->VSSetShader(g_pVertexShader, NULL, 0);
+	g_pImmediateContext->VSSetConstantBuffers(0, 1, &g_pConstantBuffer);
 	g_pImmediateContext->PSSetShader(g_pPixelShader, NULL, 0);
+	//draw vertex
+	g_pImmediateContext->DrawIndexed(18, 0, 0);
 
-	g_pImmediateContext->Draw(3, 0); //draw vertices
 	g_pSwapChain->Present(0, 0); //back buffer to screen
 
 }
